@@ -38,6 +38,11 @@
 # Continuously update the display based on user interactions.
 # Update the SI5351 frequency output based on the current 
 
+# New Not working correctly 8/4/2022
+# This updated code includes functions save_to_nvm and load_from_nvm for saving and loading the current band and frequency to and from non-volatile memory (NVM). 
+# The values are saved whenever the band, frequency, or region is changed, and are loaded at the start of the program. This ensures that the device retains the 
+# last used band and frequency settings across power cycles.
+
 import time
 import board
 import busio
@@ -49,35 +54,58 @@ from adafruit_si5351 import SI5351
 import digitalio
 import rotaryio
 import adafruit_debouncer
+import microcontroller
 
 # ITU Regions and Frequency Bands
 ITU_REGIONS = ['Region 1', 'Region 2', 'Region 3']
 BANDS = ['2m', '6m']
 FREQUENCY_RANGES = {
     'Region 1': {
-        '2m': (144000000, 144499000),
-        '6m': (50000000, 50300000)
+        '2m': (144000000, 144500000),
+        '6m': (50000000, 50400000)
     },
     'Region 2': {
         '2m': (144000000, 144500000),
         '6m': (50000000, 50400000)
     },
     'Region 3': {
-        '2m': (144000000, 145800000),
-        '6m': (50000000, 54000000)
+        '2m': (144000000, 144500000),
+        '6m': (50000000, 50400000)
     }
 }
 
-# si5351 or si570
+# Used for si5351 or si570 .
 IF_FREQUENCY = 26994100
 
+# Function to save data to NVM
+def save_to_nvm(region_index, band_index, frequency):
+    microcontroller.nvm[0] = region_index
+    microcontroller.nvm[1] = band_index
+    microcontroller.nvm[2:6] = frequency.to_bytes(4, 'little')
+
+# Function to load data from NVM
+def load_from_nvm():
+    region_index = microcontroller.nvm[0]
+    band_index = microcontroller.nvm[1]
+    frequency = int.from_bytes(microcontroller.nvm[2:6], 'little')
+    return region_index, band_index, frequency
+
 # Initial state
-current_region_index = 1
-current_band_index = 0
+try:
+    current_region_index, current_band_index, current_frequency = load_from_nvm()
+except:
+    current_region_index = 1
+    current_band_index = 0
+    current_region = ITU_REGIONS[current_region_index]
+    current_band = BANDS[current_band_index]
+    FREQUENCY_RANGE = FREQUENCY_RANGES[current_region][current_band]
+    current_frequency = FREQUENCY_RANGE[0]
+    DEFAULT_FREQUENCY = current_frequency
+    save_to_nvm(current_region_index, current_band_index, current_frequency)
+
 current_region = ITU_REGIONS[current_region_index]
 current_band = BANDS[current_band_index]
 FREQUENCY_RANGE = FREQUENCY_RANGES[current_region][current_band]
-current_frequency = FREQUENCY_RANGE[0]
 DEFAULT_FREQUENCY = current_frequency
 
 # Release any displays that may be in use
@@ -145,7 +173,7 @@ text_area = label.Label(terminalio.FONT, scale=1, text="Initializing...", color=
 splash.append(text_area)
 
 # Flashes bottom of screen above blue bar when PTT is activated
-transmitting_label = label.Label(terminalio.FONT, scale=1, text="Transmitting", color=0xFFFF00, x=45, y=110)
+transmitting_label = label.Label(terminalio.FONT, scale=1, text="Transmitting", color=0xFFFF00, x=35, y=110)
 splash.append(transmitting_label)
 transmitting_label.hidden = True  # Initially hidden
 
@@ -241,6 +269,7 @@ def change_itu_region():
     FREQUENCY_RANGE = FREQUENCY_RANGES[current_region][current_band]
     current_frequency = FREQUENCY_RANGE[0]
     set_frequency(current_frequency)
+    save_to_nvm(current_region_index, current_band_index, current_frequency)
 
 def change_band():
     global current_band_index, current_band, FREQUENCY_RANGE, current_frequency
@@ -249,6 +278,7 @@ def change_band():
     FREQUENCY_RANGE = FREQUENCY_RANGES[current_region][current_band]
     current_frequency = FREQUENCY_RANGE[0]
     set_frequency(current_frequency)
+    save_to_nvm(current_region_index, current_band_index, current_frequency)
 
 def handle_freq_encoder():
     global current_frequency
@@ -262,6 +292,7 @@ def handle_freq_encoder():
             current_frequency = FREQUENCY_RANGE[1]
         freq_encoder.position = 0
         set_frequency(current_frequency)
+        save_to_nvm(current_region_index, current_band_index, current_frequency)
 
 def handle_rit_encoder():
     global rit_value
@@ -322,3 +353,4 @@ while True:
 
     update_display()
     time.sleep(0.1)  # Small delay to avoid excessive CPU usage
+
