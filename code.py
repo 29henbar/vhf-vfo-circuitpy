@@ -38,11 +38,6 @@
 # Continuously update the display based on user interactions.
 # Update the SI5351 frequency output based on the current 
 
-# New Not working correctly 8/4/2022
-# This updated code includes functions save_to_nvm and load_from_nvm for saving and loading the current band and frequency to and from non-volatile memory (NVM). 
-# The values are saved whenever the band, frequency, or region is changed, and are loaded at the start of the program. This ensures that the device retains the 
-# last used band and frequency settings across power cycles.
-
 import time
 import board
 import busio
@@ -55,57 +50,37 @@ import digitalio
 import rotaryio
 import adafruit_debouncer
 import microcontroller
+import storage
+
 
 # ITU Regions and Frequency Bands
-ITU_REGIONS = ['Region 1', 'Region 2', 'Region 3']
+ITU_REGIONS = ['1', '2', '3']
 BANDS = ['2m', '6m']
 FREQUENCY_RANGES = {
-    'Region 1': {
+    '1': {
         '2m': (144000000, 144500000),
         '6m': (50000000, 50400000)
     },
-    'Region 2': {
+    '2': {
         '2m': (144000000, 144500000),
         '6m': (50000000, 50400000)
     },
-    'Region 3': {
+    '3': {
         '2m': (144000000, 144500000),
         '6m': (50000000, 50400000)
     }
 }
 
-# Used for si5351 or si570 .
+# si5351 or si570
 IF_FREQUENCY = 26994100
 
-# Function to save data to NVM
-def save_to_nvm(region_index, band_index, frequency):
-    microcontroller.nvm[0] = region_index
-    microcontroller.nvm[1] = band_index
-    microcontroller.nvm[2:6] = frequency.to_bytes(4, 'little')
-
-# Function to load data from NVM
-def load_from_nvm():
-    region_index = microcontroller.nvm[0]
-    band_index = microcontroller.nvm[1]
-    frequency = int.from_bytes(microcontroller.nvm[2:6], 'little')
-    return region_index, band_index, frequency
-
 # Initial state
-try:
-    current_region_index, current_band_index, current_frequency = load_from_nvm()
-except:
-    current_region_index = 1
-    current_band_index = 0
-    current_region = ITU_REGIONS[current_region_index]
-    current_band = BANDS[current_band_index]
-    FREQUENCY_RANGE = FREQUENCY_RANGES[current_region][current_band]
-    current_frequency = FREQUENCY_RANGE[0]
-    DEFAULT_FREQUENCY = current_frequency
-    save_to_nvm(current_region_index, current_band_index, current_frequency)
-
+current_region_index = 1
+current_band_index = 0
 current_region = ITU_REGIONS[current_region_index]
 current_band = BANDS[current_band_index]
 FREQUENCY_RANGE = FREQUENCY_RANGES[current_region][current_band]
+current_frequency = FREQUENCY_RANGE[0]
 DEFAULT_FREQUENCY = current_frequency
 
 # Release any displays that may be in use
@@ -173,7 +148,7 @@ text_area = label.Label(terminalio.FONT, scale=1, text="Initializing...", color=
 splash.append(text_area)
 
 # Flashes bottom of screen above blue bar when PTT is activated
-transmitting_label = label.Label(terminalio.FONT, scale=1, text="Transmitting", color=0xFFFF00, x=35, y=110)
+transmitting_label = label.Label(terminalio.FONT, scale=1, text="Transmitting", color=0xFFFF00, x=45, y=95)
 splash.append(transmitting_label)
 transmitting_label.hidden = True  # Initially hidden
 
@@ -192,7 +167,7 @@ splash.append(smeter_sprite)
 blue_bar_bitmap = displayio.Bitmap(160, 10, 1)
 blue_bar_palette = displayio.Palette(1)
 blue_bar_palette[0] = 0xFF0000
-blue_bar = displayio.TileGrid(blue_bar_bitmap, pixel_shader=blue_bar_palette, x=0, y=115)
+blue_bar = displayio.TileGrid(blue_bar_bitmap, pixel_shader=blue_bar_palette, x=0, y=120)
 splash.append(blue_bar)
 blue_bar.hidden = True  # Initially hidden
 
@@ -233,20 +208,50 @@ band_button_debounced = adafruit_debouncer.Debouncer(band_button)
 
 # Initial state
 current_frequency = DEFAULT_FREQUENCY
-current_step_index = 3  # Default step to 10000 Hz
+current_step_index = 2  # Default step to 10000 Hz
 current_mode = MODES[0] # Defaults to USB
 rit_enabled = False # Rit Disabled by default
 rit_value = 0 # Default rit to 0 when Disabled AKA Reset Rit
 transmit_mode = False # Track the transmit mode
 
+def save_settings():
+    settings = bytearray(20)
+    settings[0] = current_region_index
+    settings[1] = current_band_index
+    settings[2] = current_step_index
+    settings[3] = MODES.index(current_mode)
+    settings[4] = rit_enabled
+    settings[5:9] = current_frequency.to_bytes(4, 'big')
+    settings[9:13] = rit_value.to_bytes(4, 'big')
+    settings[13] = transmit_mode
+    microcontroller.nvm[0:20] = settings
+
+def load_settings():
+    settings = microcontroller.nvm[0:20]
+    global current_region_index, current_band_index, current_step_index
+    global current_mode, rit_enabled, current_frequency, rit_value, transmit_mode
+    
+    if settings[0] != 0xFF:  # Check if NVM is initialized
+        current_region_index = settings[0]
+        current_band_index = settings[1]
+        current_step_index = settings[2]
+        current_mode = MODES[settings[3]]
+        rit_enabled = bool(settings[4])
+        current_frequency = int.from_bytes(settings[5:9], 'big')
+        rit_value = int.from_bytes(settings[9:13], 'big')
+        transmit_mode = bool(settings[13])
+        return True
+    return False
+
 def update_display():
     display_frequency = current_frequency + rit_value if rit_enabled else current_frequency
-    text = f"Freq: {display_frequency / 1000:.1f} MHz\n"
-    text += f"Mode: {current_mode}\n"
-    text += f"Step: {STEPS[current_step_index]} Hz\n"
-    text += f"RIT: {rit_value / 1000:.1f} kHz {'ON' if rit_enabled else 'OFF'}\n"
-    text += f"Region: {current_region}\n"
-    text += f"Band: {current_band}\n"
+    text = f"\n"
+    text += f"     {current_mode} {display_frequency / 1000:.1f} \n"
+    text += f"\n"
+    text += f" Step: {STEPS[current_step_index]} Hz\n"
+    text += f" RIT: {'ON' if rit_enabled else 'OFF'} {rit_value / 1000:.1f} kHz \n"
+    text += "\n"
+    text += f"Band:{current_band}            ITU:{current_region} \n"
     text_area.text = text
     transmitting_label.hidden = ptt_button.value  # Show transmitting if PTT is pressed
     blue_bar.hidden = ptt_button.value  # Show red bar if PTT is pressed
@@ -257,10 +262,12 @@ def set_frequency(frequency):
 def change_mode():
     global current_mode
     current_mode = MODES[(MODES.index(current_mode) + 1) % len(MODES)]
+    save_settings()
 
 def change_step():
     global current_step_index
     current_step_index = (current_step_index + 1) % len(STEPS)
+    save_settings()
 
 def change_itu_region():
     global current_region_index, current_region, FREQUENCY_RANGE, current_frequency
@@ -269,7 +276,7 @@ def change_itu_region():
     FREQUENCY_RANGE = FREQUENCY_RANGES[current_region][current_band]
     current_frequency = FREQUENCY_RANGE[0]
     set_frequency(current_frequency)
-    save_to_nvm(current_region_index, current_band_index, current_frequency)
+    save_settings()
 
 def change_band():
     global current_band_index, current_band, FREQUENCY_RANGE, current_frequency
@@ -278,7 +285,7 @@ def change_band():
     FREQUENCY_RANGE = FREQUENCY_RANGES[current_region][current_band]
     current_frequency = FREQUENCY_RANGE[0]
     set_frequency(current_frequency)
-    save_to_nvm(current_region_index, current_band_index, current_frequency)
+    save_settings()
 
 def handle_freq_encoder():
     global current_frequency
@@ -292,7 +299,7 @@ def handle_freq_encoder():
             current_frequency = FREQUENCY_RANGE[1]
         freq_encoder.position = 0
         set_frequency(current_frequency)
-        save_to_nvm(current_region_index, current_band_index, current_frequency)
+        save_settings()
 
 def handle_rit_encoder():
     global rit_value
@@ -304,6 +311,7 @@ def handle_rit_encoder():
         if rit_value > 9900:
             rit_value = 9900
         rit_encoder.position = 0
+        save_settings()
 
 def update_smeter(level):
     # Update the S-meter display
@@ -312,6 +320,10 @@ def update_smeter(level):
     smeter_text.color = (level * 28, 255 - level * 28, 0)
     for x in range(100):
         smeter_bar[x, 0] = min(x // 10, level)  # Update bar graph
+
+# Load settings on startup
+if not load_settings():
+    save_settings()  # Save default settings if NVM was not initialized
 
 # Main loop
 while True:
@@ -337,6 +349,7 @@ while True:
         rit_enabled = not rit_enabled
         if not rit_enabled:
             rit_value = 0
+        save_settings()
 
     if step_button_debounced.fell:
         change_step()
@@ -353,4 +366,3 @@ while True:
 
     update_display()
     time.sleep(0.1)  # Small delay to avoid excessive CPU usage
-
