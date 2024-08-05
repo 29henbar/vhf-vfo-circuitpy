@@ -59,3 +59,8 @@
 # the button on the rit encoder enables/disables rit.
 # you will need a button for step/region/and band (band is if you plan to have 2m/6m)
 
+
+# New Not working correctly 8/4/2022
+# This updated code includes functions save_to_nvm and load_from_nvm for saving and loading the current band and frequency to and from non-volatile memory (NVM). 
+# The values are saved whenever the band, frequency, or region is changed, and are loaded at the start of the program. This ensures that the device retains the 
+# last used band and frequency settings across power cycles.
