@@ -50,8 +50,9 @@ import digitalio
 import rotaryio
 import adafruit_debouncer
 import microcontroller
-import storage
 
+# Constants
+NVM_SIZE = 64  # Size of NVM in bytes
 
 # ITU Regions and Frequency Bands
 ITU_REGIONS = ['1', '2', '3']
@@ -75,8 +76,16 @@ FREQUENCY_RANGES = {
 IF_FREQUENCY = 26994100
 
 # Initial state
-current_region_index = 1
-current_band_index = 0
+DEFAULT_REGION_INDEX = 1
+DEFAULT_BAND_INDEX = 0
+DEFAULT_STEP_INDEX = 2
+DEFAULT_MODE_INDEX = 0
+
+current_region_index = DEFAULT_REGION_INDEX
+current_band_index = DEFAULT_BAND_INDEX
+current_step_index = DEFAULT_STEP_INDEX
+current_mode_index = DEFAULT_MODE_INDEX
+
 current_region = ITU_REGIONS[current_region_index]
 current_band = BANDS[current_band_index]
 FREQUENCY_RANGE = FREQUENCY_RANGES[current_region][current_band]
@@ -207,46 +216,40 @@ itu_button_debounced = adafruit_debouncer.Debouncer(itu_button)
 band_button_debounced = adafruit_debouncer.Debouncer(band_button)
 
 # Initial state
-current_frequency = DEFAULT_FREQUENCY
-current_step_index = 2  # Default step to 10000 Hz
-current_mode = MODES[0] # Defaults to USB
 rit_enabled = False # Rit Disabled by default
 rit_value = 0 # Default rit to 0 when Disabled AKA Reset Rit
 transmit_mode = False # Track the transmit mode
 
 def save_settings():
-    settings = bytearray(20)
+    settings = bytearray(NVM_SIZE)
     settings[0] = current_region_index
     settings[1] = current_band_index
     settings[2] = current_step_index
-    settings[3] = MODES.index(current_mode)
-    settings[4] = rit_enabled
-    settings[5:9] = current_frequency.to_bytes(4, 'big')
+    settings[3] = current_mode_index
+    settings[4:8] = current_frequency.to_bytes(4, 'big')
+    settings[8] = int(rit_enabled)
     settings[9:13] = rit_value.to_bytes(4, 'big')
-    settings[13] = transmit_mode
-    microcontroller.nvm[0:20] = settings
+    microcontroller.nvm[0:NVM_SIZE] = settings
 
 def load_settings():
-    settings = microcontroller.nvm[0:20]
-    global current_region_index, current_band_index, current_step_index
-    global current_mode, rit_enabled, current_frequency, rit_value, transmit_mode
-    
-    if settings[0] != 0xFF:  # Check if NVM is initialized
+    settings = microcontroller.nvm[0:NVM_SIZE]
+    if settings[0] == 0xFF:  # Check if NVM is uninitialized
+        save_settings()
+    else:
+        global current_region_index, current_band_index, current_step_index, current_mode_index
+        global current_frequency, rit_enabled, rit_value
         current_region_index = settings[0]
         current_band_index = settings[1]
         current_step_index = settings[2]
-        current_mode = MODES[settings[3]]
-        rit_enabled = bool(settings[4])
-        current_frequency = int.from_bytes(settings[5:9], 'big')
+        current_mode_index = settings[3]
+        current_frequency = int.from_bytes(settings[4:8], 'big')
+        rit_enabled = bool(settings[8])
         rit_value = int.from_bytes(settings[9:13], 'big')
-        transmit_mode = bool(settings[13])
-        return True
-    return False
 
 def update_display():
     display_frequency = current_frequency + rit_value if rit_enabled else current_frequency
     text = f"\n"
-    text += f"     {current_mode} {display_frequency / 1000:.1f} \n"
+    text += f"     {MODES[current_mode_index]} {display_frequency / 1000:.1f} \n"
     text += f"\n"
     text += f" Step: {STEPS[current_step_index]} Hz\n"
     text += f" RIT: {'ON' if rit_enabled else 'OFF'} {rit_value / 1000:.1f} kHz \n"
@@ -260,8 +263,8 @@ def set_frequency(frequency):
     pll_frequency = frequency + IF_FREQUENCY # Add logic to set the frequency on the Si5351
 
 def change_mode():
-    global current_mode
-    current_mode = MODES[(MODES.index(current_mode) + 1) % len(MODES)]
+    global current_mode_index
+    current_mode_index = (current_mode_index + 1) % len(MODES)
     save_settings()
 
 def change_step():
@@ -322,8 +325,7 @@ def update_smeter(level):
         smeter_bar[x, 0] = min(x // 10, level)  # Update bar graph
 
 # Load settings on startup
-if not load_settings():
-    save_settings()  # Save default settings if NVM was not initialized
+load_settings()
 
 # Main loop
 while True:
